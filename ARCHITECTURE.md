@@ -4,6 +4,8 @@ A control plane for multi-repo AI engineering.
 
 OpenCode Fleet turns a group of large repositories into a coordinated system instead of one oversized prompt. Each repository runs its own `opencode serve` backend, keeping its local rules, sessions, tools, and warmed context close to the code. On top of that, a lightweight coordinator workspace tracks workflows, fans out impact-analysis prompts, stores repo session mappings, and routes follow-up implementation prompts only where they belong.
 
+The key product idea is that the human stays in one coordinator conversation. The human should not need to manually juggle repo-by-repo commands unless debugging. They start `opencode` in the coordinator folder, describe the feature, and the coordinator handles the orchestration.
+
 The result is a better operating model for real systems: repo-local context stays sharp, cross-repo change becomes explicit, and large rollouts stop depending on one fragile, overloaded chat session.
 
 ## The idea
@@ -25,14 +27,28 @@ This is the same pattern used in good distributed systems: local autonomy, centr
 - Rollout state is tracked explicitly instead of living in chat history.
 - Session continuity is preserved per repo, per workflow.
 
-## How it works
+## User experience
+
+The intended flow looks like this:
 
 1. Start one `opencode serve` instance in each repository.
-2. Register those backends in a coordinator workspace.
-3. Run a fleet-wide impact prompt against all repos.
-4. Store the resulting session IDs under one workflow name, like `auth-v2`.
-5. Follow up only in impacted repos with repo-local implementation prompts.
-6. Track progress, testing, branches, and PRs in one place.
+2. Start `opencode` in the coordinator workspace.
+3. Tell the coordinator what cross-repo feature or migration should happen.
+4. Let the coordinator assess impact, choose rollout order, and continue repo-local sessions.
+5. Review the combined progress summary instead of manually driving every repo.
+
+Example prompt:
+
+```text
+I have addition feature 1 and this will impact A, external API of A, and B.
+Coordinate and implement the changes.
+A runs on :4001, external API of A runs on :4002, and B runs on :4003.
+B consumes A only through the external API.
+The new interface should add customerSegment to the customer details response.
+Keep the rollout backward compatible and update tests where needed.
+```
+
+Behind the scenes, the coordinator can still use `src/fleet.ts` to fan out impact analysis, preserve one workflow key, and continue repo-local execution sessions.
 
 ## Architecture Sketch
 
@@ -53,7 +69,7 @@ This is the same pattern used in good distributed systems: local autonomy, centr
           |                             |                             |
           v                             v                             v
 +-------------------+       +-------------------+       +-------------------+
-| Repo A            |       | Repo B            |       | Repo C            |
+| Repo A            |       | External API of A |       | Repo B            |
 |-------------------|       |-------------------|       |-------------------|
 | opencode serve    |       | opencode serve    |       | opencode serve    |
 | AGENTS.md         |       | AGENTS.md         |       | AGENTS.md         |
@@ -82,7 +98,7 @@ Each repo backend should know:
 
 ## Why this is better than one giant session
 
-A single chat across multiple large repos feels convenient at first, but it creates hidden failure modes: bloated context, weak locality, unclear state, and poor repeatability. OpenCode Fleet replaces that with a composable model:
+A single chat across multiple large repos feels convenient at first, but it creates hidden failure modes: bloated context, weak locality, unclear state, and poor repeatability. OpenCode Fleet replaces that with a composable model while still preserving a single top-level user experience:
 
 - bounded context per repo
 - explicit workflow state
@@ -106,6 +122,7 @@ Think of it like Kubernetes for coding sessions.
 - schema and client updates across frontend/backend repos
 - versioned deprecations that require staged implementation
 - fleet-wide impact mapping before opening PRs
+- producer API consumer rollouts such as `A -> external-api -> B`
 
 ## What makes it compelling
 
@@ -118,4 +135,4 @@ It treats cross-repo engineering as a first-class workflow instead of an awkward
 
 ## Short pitch
 
-OpenCode Fleet is a multi-repo control plane for OpenCode: one backend per repository, one coordinator above them, and a workflow-driven way to analyze, execute, and track changes across an entire code fleet.
+OpenCode Fleet is a multi-repo control plane for OpenCode: one backend per repository, one coordinator above them, and one natural-language coordinator conversation that can analyze, execute, and track changes across an entire code fleet.

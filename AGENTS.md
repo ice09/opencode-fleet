@@ -7,6 +7,8 @@ This workspace coordinates changes across multiple repositories that each run th
 - Treat this workspace as orchestration-only unless a task explicitly targets coordinator files.
 - Repo-local implementation belongs in the repo served by that repo's OpenCode backend.
 - Prefer planning and aggregation here, implementation there.
+- Keep the user interaction natural-language first; the user should not need to invoke `fleet` commands directly unless debugging.
+- When asked to coordinate a cross-repo feature, use `src/fleet.ts` behind the scenes to assess impact, preserve workflow sessions, and continue implementation in the impacted repos.
 
 ## Source of truth
 
@@ -19,3 +21,4 @@ This workspace coordinates changes across multiple repositories that each run th
 - Use one workflow key per cross-repo effort, for example `auth-v2`.
 - Reuse that workflow key across every repo session.
 - Keep prompts repo-specific once impact analysis is complete.
+- Return consolidated progress to the user from the coordinator workspace instead of making the user manually drive each repo.
