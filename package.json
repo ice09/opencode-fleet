@@ -1,0 +1,19 @@
+{
+  "name": "opencode-fleet-coordinator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fleet": "tsx src/fleet.ts",
+    "fleet:list": "tsx src/fleet.ts list",
+    "fleet:status": "tsx src/fleet.ts status"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2"
+  }
+}
