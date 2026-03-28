@@ -4,30 +4,30 @@
   },
   "repos": [
     {
-      "id": "repo-a",
-      "name": "Repo A",
-      "baseUrl": "http://127.0.0.1:4101",
-      "path": "../repo-a",
+      "id": "a",
+      "name": "A",
+      "baseUrl": "http://127.0.0.1:4001",
+      "path": "../a",
       "username": "opencode",
       "passwordEnv": "REPO_A_OPENCODE_PASSWORD",
       "defaultAgent": "build"
     },
     {
-      "id": "repo-b",
-      "name": "Repo B",
-      "baseUrl": "http://127.0.0.1:4102",
-      "path": "../repo-b",
+      "id": "external-api",
+      "name": "External API of A",
+      "baseUrl": "http://127.0.0.1:4002",
+      "path": "../external-api",
       "username": "opencode",
-      "passwordEnv": "REPO_B_OPENCODE_PASSWORD",
+      "passwordEnv": "REPO_EXTERNAL_API_OPENCODE_PASSWORD",
       "defaultAgent": "build"
     },
     {
-      "id": "repo-c",
-      "name": "Repo C",
-      "baseUrl": "http://127.0.0.1:4103",
-      "path": "../repo-c",
+      "id": "b",
+      "name": "B",
+      "baseUrl": "http://127.0.0.1:4003",
+      "path": "../b",
       "username": "opencode",
-      "passwordEnv": "REPO_C_OPENCODE_PASSWORD",
+      "passwordEnv": "REPO_B_OPENCODE_PASSWORD",
       "defaultAgent": "build"
     }
   ]
