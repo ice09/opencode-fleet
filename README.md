@@ -2,6 +2,8 @@
 
 OpenCode Fleet is a small coordinator for multiple per-repo `opencode serve` backends.
 
+<img src="docs/opencode-fleet.png">
+
 ## What it does
 
 - Keeps one `opencode serve` instance per repository
