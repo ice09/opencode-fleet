@@ -7,11 +7,12 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+**/.gradle/
+**/build/
 
 # Environment files
 .env
 .env.*
-!.env.example
 
 # Logs
 *.log

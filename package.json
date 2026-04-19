@@ -4,9 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "showcase:start": "./start-showcase.sh",
+    "showcase:servers": "./start-opencode-servers.sh",
     "fleet": "tsx src/fleet.ts",
     "fleet:list": "tsx src/fleet.ts list",
-    "fleet:status": "tsx src/fleet.ts status"
+    "fleet:status": "tsx src/fleet.ts status",
+    "fleet:impact": "tsx src/fleet.ts impact",
+    "fleet:prompt": "tsx src/fleet.ts prompt",
+    "fleet:sync": "tsx src/fleet.ts sync"
   },
   "dependencies": {
     "@opencode-ai/sdk": "latest"

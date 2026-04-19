@@ -4,30 +4,17 @@
   },
   "repos": [
     {
-      "id": "a",
-      "name": "A",
+      "id": "customer-service",
+      "name": "Customer Service",
       "baseUrl": "http://127.0.0.1:4001",
-      "path": "../a",
-      "username": "opencode",
-      "passwordEnv": "REPO_A_OPENCODE_PASSWORD",
+      "path": "./customer-service",
       "defaultAgent": "build"
     },
     {
-      "id": "external-api",
-      "name": "External API of A",
+      "id": "order-service",
+      "name": "Order Service",
       "baseUrl": "http://127.0.0.1:4002",
-      "path": "../external-api",
-      "username": "opencode",
-      "passwordEnv": "REPO_EXTERNAL_API_OPENCODE_PASSWORD",
-      "defaultAgent": "build"
-    },
-    {
-      "id": "b",
-      "name": "B",
-      "baseUrl": "http://127.0.0.1:4003",
-      "path": "../b",
-      "username": "opencode",
-      "passwordEnv": "REPO_B_OPENCODE_PASSWORD",
+      "path": "./order-service",
       "defaultAgent": "build"
     }
   ]

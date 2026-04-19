@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process"
 import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import process from "node:process"
+import { promisify } from "node:util"
 import { createOpencodeClient } from "@opencode-ai/sdk"
 
 type ModelRef = {
@@ -58,80 +60,32 @@ type ImpactResult = {
   text: string
 }
 
+type SyncResult = {
+  repo: string
+  sessionId: string | null
+  healthy: boolean
+  version: string
+  branch: string | null
+  dirty: boolean | null
+  changedFiles: string[]
+  lastAssistantText: string
+}
+
 const DEFAULT_CONFIG_PATH = path.resolve(process.cwd(), "repos.json")
 const DEFAULT_STATE_PATH = path.resolve(process.cwd(), ".fleet-state.json")
+const DEFAULT_TRACKER_PATH = path.resolve(process.cwd(), "change-tracker.md")
+const execFileAsync = promisify(execFile)
 
-const IMPACT_FORMAT = {
-  type: "json_schema",
-  retryCount: 2,
-  schema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      impacted: {
-        type: "boolean",
-        description: "Whether this repository needs any change for the proposed work"
-      },
-      summary: {
-        type: "string",
-        description: "Short explanation of the repository impact"
-      },
-      filesOrAreas: {
-        type: "array",
-        description: "Files, services, packages, or functional areas likely involved",
-        items: {
-          type: "string"
-        }
-      },
-      risks: {
-        type: "array",
-        description: "Main technical or rollout risks in this repository",
-        items: {
-          type: "string"
-        }
-      },
-      blockers: {
-        type: "array",
-        description: "Hard blockers or unknowns that need human input",
-        items: {
-          type: "string"
-        }
-      },
-      rolloutOrder: {
-        oneOf: [
-          {
-            type: "integer"
-          },
-          {
-            type: "null"
-          }
-        ],
-        description: "Optional suggested rollout ordering, where lower is earlier"
-      },
-      tests: {
-        type: "array",
-        description: "Tests or verification steps that should run in this repo",
-        items: {
-          type: "string"
-        }
-      },
-      recommendedNextPrompt: {
-        type: "string",
-        description: "Suggested repo-local implementation prompt if the repo is impacted"
-      }
-    },
-    required: [
-      "impacted",
-      "summary",
-      "filesOrAreas",
-      "risks",
-      "blockers",
-      "rolloutOrder",
-      "tests",
-      "recommendedNextPrompt"
-    ]
-  }
-} as const
+const IMPACT_RESPONSE_SHAPE = `{
+  "impacted": boolean,
+  "summary": string,
+  "filesOrAreas": string[],
+  "risks": string[],
+  "blockers": string[],
+  "rolloutOrder": number | null,
+  "tests": string[],
+  "recommendedNextPrompt": string
+}`
 
 async function main() {
   const parsed = parseArgs(process.argv.slice(2))
@@ -160,6 +114,14 @@ async function main() {
         await loadConfig(resolveFilePath(parsed.flags.config, DEFAULT_CONFIG_PATH)),
         await loadState(resolveFilePath(parsed.flags.state, DEFAULT_STATE_PATH)),
         resolveFilePath(parsed.flags.state, DEFAULT_STATE_PATH),
+        parsed
+      )
+      return
+    case "sync":
+      await handleSync(
+        await loadConfig(resolveFilePath(parsed.flags.config, DEFAULT_CONFIG_PATH)),
+        await loadState(resolveFilePath(parsed.flags.state, DEFAULT_STATE_PATH)),
+        resolveFilePath(parsed.flags.tracker, DEFAULT_TRACKER_PATH),
         parsed
       )
       return
@@ -226,17 +188,11 @@ async function handleImpact(config: FleetConfig, state: FleetState, statePath: s
       const response = unwrap(
         await client.session.prompt({
           path: { id: sessionId },
-          body: {
+          body: buildPromptBody({
             agent: resolveAgent(repo, config, parsed.flags.agent),
             model: resolveModel(repo, config, parsed.flags.model),
-            parts: [
-              {
-                type: "text",
-                text: buildImpactPrompt(repo, prompt)
-              }
-            ],
-            format: IMPACT_FORMAT
-          }
+            prompt: buildImpactPrompt(repo, prompt)
+          })
         } as any)
       )
       markPrompted(state, workflow, repo.id)
@@ -302,16 +258,11 @@ async function handlePrompt(config: FleetConfig, state: FleetState, statePath: s
   const response = unwrap(
     await client.session.prompt({
       path: { id: sessionId },
-      body: {
+      body: buildPromptBody({
         agent: resolveAgent(repo, config, parsed.flags.agent),
         model: resolveModel(repo, config, parsed.flags.model),
-        parts: [
-          {
-            type: "text",
-            text: prompt
-          }
-        ]
-      }
+        prompt
+      })
     })
   )
   markPrompted(state, workflow, repo.id)
@@ -326,6 +277,55 @@ async function handlePrompt(config: FleetConfig, state: FleetState, statePath: s
   console.log(`session: ${sessionId}`)
   const text = extractText(response)
   console.log(text || JSON.stringify(response, null, 2))
+}
+
+async function handleSync(config: FleetConfig, state: FleetState, trackerPath: string, parsed: ParsedArgs) {
+  const workflow = parsed.positionals[0]
+  ensure(workflow, "Missing workflow name. Example: sync auth-v2")
+
+  const workflowState = state.workflows[workflow]
+  ensure(workflowState, `Unknown workflow: ${workflow}`)
+
+  const results = await Promise.all(
+    config.repos.map(async (repo) => {
+      const health = await getHealth(repo)
+      const sessionId = workflowState.repos[repo.id]?.sessionId ?? null
+      const repoPath = repo.path ? path.resolve(process.cwd(), repo.path) : null
+      const [branch, dirty] = repoPath ? await getRepoBranchAndDirty(repoPath) : [null, null]
+      const changedFiles = sessionId ? await getChangedFiles(repo, sessionId) : []
+      const lastAssistantText = sessionId ? await getLastAssistantText(repo, sessionId) : ""
+
+      return {
+        repo: repo.id,
+        sessionId,
+        healthy: health.healthy,
+        version: health.version,
+        branch,
+        dirty,
+        changedFiles,
+        lastAssistantText
+      } satisfies SyncResult
+    })
+  )
+
+  await syncTracker(trackerPath, workflow, results)
+
+  if (parsed.flags.json) {
+    console.log(JSON.stringify({ workflow, trackerPath, results }, null, 2))
+    return
+  }
+
+  console.log(`# Synced workflow ${workflow}`)
+  console.log(`tracker: ${trackerPath}`)
+  for (const result of results) {
+    console.log(`\n## ${result.repo}`)
+    console.log(`session: ${result.sessionId ?? "-"}`)
+    console.log(`healthy: ${String(result.healthy)} (${result.version})`)
+    console.log(`branch: ${result.branch ?? "-"}`)
+    console.log(`dirty: ${result.dirty === null ? "-" : String(result.dirty)}`)
+    console.log(`changedFiles: ${result.changedFiles.length > 0 ? result.changedFiles.join(" | ") : "-"}`)
+    console.log(`lastAssistantText: ${result.lastAssistantText || "-"}`)
+  }
 }
 
 async function ensureSession(args: {
@@ -391,7 +391,13 @@ function createClient(repo: RepoConfig) {
     baseUrl: repo.baseUrl,
     throwOnError: true,
     fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
-      const headers = new Headers(init?.headers ?? undefined)
+      const requestHeaders = input instanceof Request ? input.headers : undefined
+      const headers = new Headers(requestHeaders)
+      if (init?.headers) {
+        for (const [key, value] of new Headers(init.headers).entries()) {
+          headers.set(key, value)
+        }
+      }
       if (authorization) {
         headers.set("Authorization", authorization)
       }
@@ -458,14 +464,48 @@ function buildImpactPrompt(repo: RepoConfig, prompt: string) {
     "Evaluate the current repository context and identify whether it needs changes.",
     "Focus on interfaces, contracts, environment variables, deployment sequencing, migration risks, and verification work.",
     "Be concrete and repo-local. Do not speculate about unrelated repositories except when noting dependencies or rollout order.",
+    "Respond with valid JSON only. Do not wrap it in markdown fences.",
+    `Use exactly this shape: ${IMPACT_RESPONSE_SHAPE}`,
     "",
     "Proposed change:",
     prompt
   ].join("\n")
 }
 
+function buildPromptBody(args: { agent: string; model: ModelRef | undefined; prompt: string }) {
+  return {
+    agent: args.agent,
+    ...(args.model ? { model: args.model } : {}),
+    parts: [
+      {
+        type: "text" as const,
+        text: args.prompt
+      }
+    ]
+  }
+}
+
 function extractStructuredOutput(response: any) {
-  return response?.info?.structured_output ?? response?.structured_output ?? null
+  const structured = response?.info?.structured_output ?? response?.structured_output
+  if (structured) {
+    return structured
+  }
+
+  const text = extractText(response)
+  if (!text) {
+    return null
+  }
+
+  const candidate = extractJsonObject(text)
+  if (!candidate) {
+    return null
+  }
+
+  try {
+    return JSON.parse(candidate) as Record<string, unknown>
+  } catch {
+    return null
+  }
 }
 
 function extractText(response: any) {
@@ -478,6 +518,21 @@ function extractText(response: any) {
     .map((part) => part.text.trim())
     .filter(Boolean)
     .join("\n\n")
+}
+
+function extractJsonObject(text: string) {
+  const fenced = text.match(/```json\s*([\s\S]*?)```/i) ?? text.match(/```\s*([\s\S]*?)```/)
+  if (fenced?.[1]) {
+    return fenced[1].trim()
+  }
+
+  const firstBrace = text.indexOf("{")
+  const lastBrace = text.lastIndexOf("}")
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+    return null
+  }
+
+  return text.slice(firstBrace, lastBrace + 1).trim()
 }
 
 function printImpactSection(label: string, value: unknown) {
@@ -497,6 +552,110 @@ function unwrap<T>(response: { data?: T } | T): T {
     return (response as { data: T }).data
   }
   return response as T
+}
+
+async function getChangedFiles(repo: RepoConfig, sessionId: string) {
+  const client = createClient(repo)
+  const response = unwrap(await client.session.diff({ path: { id: sessionId } })) as Array<{
+    path?: { file?: string }
+    file?: { path?: string }
+  }>
+
+  return response
+    .map((item) => item?.path?.file ?? item?.file?.path)
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+}
+
+async function getLastAssistantText(repo: RepoConfig, sessionId: string) {
+  const client = createClient(repo)
+  const response = unwrap(await client.session.messages({ path: { id: sessionId }, query: { limit: 20 } })) as Array<{
+    info?: { role?: string }
+    parts?: Array<{ type?: string; text?: string }>
+  }>
+
+  for (let index = response.length - 1; index >= 0; index -= 1) {
+    const message = response[index]
+    if (message?.info?.role !== "assistant") {
+      continue
+    }
+
+    const text = (message.parts ?? [])
+      .filter((part) => part?.type === "text" && typeof part.text === "string")
+      .map((part) => part.text!.trim())
+      .filter(Boolean)
+      .join("\n\n")
+
+    if (text) {
+      return text
+    }
+  }
+
+  return ""
+}
+
+async function getRepoBranchAndDirty(repoPath: string): Promise<[string | null, boolean | null]> {
+  try {
+    const branch = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoPath })
+    const status = await execFileAsync("git", ["status", "--short"], { cwd: repoPath })
+    return [branch.stdout.trim() || null, status.stdout.trim().length > 0]
+  } catch {
+    return [null, null]
+  }
+}
+
+async function syncTracker(trackerPath: string, workflow: string, results: SyncResult[]) {
+  const raw = await readTextFile(trackerPath)
+  const updated = upsertWorkflowRows(raw, workflow, results)
+  if (updated !== raw) {
+    await writeFile(trackerPath, updated, "utf8")
+  }
+}
+
+function upsertWorkflowRows(markdown: string, workflow: string, results: SyncResult[]) {
+  const heading = `## Workflow: ${workflow}`
+  const start = markdown.indexOf(heading)
+  if (start === -1) {
+    return markdown
+  }
+
+  const next = markdown.indexOf("\n## Workflow:", start + heading.length)
+  const end = next === -1 ? markdown.length : next + 1
+  const section = markdown.slice(start, end)
+  const updatedSection = updateWorkflowSection(section, results)
+  return `${markdown.slice(0, start)}${updatedSection}${markdown.slice(end)}`
+}
+
+function updateWorkflowSection(section: string, results: SyncResult[]) {
+  const lines = section.split("\n")
+  const separatorIndex = lines.findIndex((line) => line.trim() === "| --- | --- | --- | --- | --- | --- |")
+  if (separatorIndex === -1) {
+    return section
+  }
+
+  const rowStart = separatorIndex + 1
+  const rowEnd = lines.findIndex((line, index) => index >= rowStart && line.trim() === "")
+  const existingRows = rowEnd === -1 ? lines.slice(rowStart) : lines.slice(rowStart, rowEnd)
+  const existingByRepo = new Map(
+    existingRows
+      .filter((line) => line.trim().startsWith("|"))
+      .map((line) => {
+        const cells = line.split("|").map((cell) => cell.trim())
+        return [cells[1], cells] as const
+      })
+  )
+
+  const updatedRows = results.map((result) => {
+    const existing = existingByRepo.get(result.repo)
+    const tests = existing?.[5] || "pending"
+    const pr = existing?.[6] || "pending"
+    const impacted = result.sessionId ? "yes" : (existing?.[2] || "unknown")
+    const session = result.sessionId ? `\`${result.sessionId}\`` : (existing?.[3] || "pending")
+    const branch = result.branch ? `\`${result.branch}\`` : (existing?.[4] || "pending")
+    return `| ${result.repo} | ${impacted} | ${session} | ${branch} | ${tests} | ${pr} |`
+  })
+
+  const suffix = rowEnd === -1 ? [] : lines.slice(rowEnd)
+  return [...lines.slice(0, rowStart), ...updatedRows, ...suffix].join("\n")
 }
 
 async function loadConfig(configPath: string) {
@@ -586,12 +745,14 @@ function printUsage() {
   fleet status [workflow] [--json]
   fleet impact <workflow> <prompt> [--agent build|plan] [--model provider/model] [--new-session] [--json]
   fleet prompt <repo> <workflow> <prompt> [--agent build|plan] [--model provider/model] [--new-session] [--json]
+  fleet sync <workflow> [--tracker change-tracker.md] [--json]
 
 Examples:
   npm run fleet -- list
   npm run fleet -- status auth-v2
   npm run fleet -- impact auth-v2 "Assess impact of auth v2"
   npm run fleet -- prompt repo-a auth-v2 "Implement repo-local auth v2 changes"
+  npm run fleet -- sync auth-v2
 `)
 }
 

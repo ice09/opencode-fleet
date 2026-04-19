@@ -37,18 +37,18 @@ The intended flow looks like this:
 4. Let the coordinator assess impact, choose rollout order, and continue repo-local sessions.
 5. Review the combined progress summary instead of manually driving every repo.
 
-Example prompt:
+Bundled showcase prompt:
 
 ```text
-I have addition feature 1 and this will impact A, external API of A, and B.
-Coordinate and implement the changes.
-A runs on :4001, external API of A runs on :4002, and B runs on :4003.
-B consumes A only through the external API.
-The new interface should add customerSegment to the customer details response.
+Coordinate a change across the bundled demo services.
+customer-service runs on :4001 and order-service runs on :4002.
+order-service depends on customer-service over HTTP.
+Add loyaltyStatus to the customer response and propagate it into the order summary response.
 Keep the rollout backward compatible and update tests where needed.
 ```
 
 Behind the scenes, the coordinator can still use `src/fleet.ts` to fan out impact analysis, preserve one workflow key, and continue repo-local execution sessions.
+After repo-local prompts complete, `fleet sync <workflow>` refreshes `change-tracker.md` from the saved sessions instead of relying on coordinator-side edits in the service repos.
 
 ## Architecture Sketch
 
@@ -65,18 +65,18 @@ Behind the scenes, the coordinator can still use `src/fleet.ts` to fan out impac
                        fans out prompts, stores sessions,
                        aggregates impact, tracks workflow
                                         |
-          +-----------------------------+-----------------------------+
-          |                             |                             |
-          v                             v                             v
-+-------------------+       +-------------------+       +-------------------+
-| Repo A            |       | External API of A |       | Repo B            |
-|-------------------|       |-------------------|       |-------------------|
-| opencode serve    |       | opencode serve    |       | opencode serve    |
-| AGENTS.md         |       | AGENTS.md         |       | AGENTS.md         |
-| opencode.json     |       | opencode.json     |       | opencode.json     |
-| local sessions    |       | local sessions    |       | local sessions    |
-| local tools/LSP   |       | local tools/LSP   |       | local tools/LSP   |
-+-------------------+       +-------------------+       +-------------------+
+                  +---------------------+---------------------+
+                  |                                           |
+                  v                                           v
++------------------------+                    +------------------------+
+| customer-service       |                    | order-service          |
+|------------------------|                    |------------------------|
+| opencode serve :4001   |                    | opencode serve :4002   |
+| app port :8081         |                    | app port :8082         |
+| AGENTS.md              |                    | AGENTS.md              |
+| opencode.json          |                    | opencode.json          |
+| customer contract      |                    | depends on customer    |
++------------------------+                    +------------------------+
 ```
 
 ## Core principle
@@ -122,7 +122,7 @@ Think of it like Kubernetes for coding sessions.
 - schema and client updates across frontend/backend repos
 - versioned deprecations that require staged implementation
 - fleet-wide impact mapping before opening PRs
-- producer API consumer rollouts such as `A -> external-api -> B`
+- producer API consumer rollouts such as `customer-service -> order-service`
 
 ## What makes it compelling
 
